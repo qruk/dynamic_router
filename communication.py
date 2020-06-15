@@ -166,8 +166,8 @@ class Communication:
 	# Метод удаления порта из таблицы и перевода его в неактивный режим
 	def delete_port(self, port):
 		self.turn_off_port(port)
-
 		self.delete_port_from_router_table(port)
+		print('DISCONNECTED: {port}'.format(port = port))
 
 	# Метод добавления порта с задержкой в таблицу
 	def add_address(self, address, port_delay):
@@ -180,22 +180,31 @@ class Communication:
 		finally:
 			self.router_table_lock.release()
 
+	# Метод, реализующий логику минимального маршрута
+
+
 	# Обновить задержку до адреса по порту, а так же обновить таблицу соседей
 	def update_delay(self, address, port, delay):
 		self.router_table_lock.acquire()
 		try:
 			ports = self.router.router_table.get(address)
-		except:
-			print ('FAILED: {address} not updated'.format(address  = address ))
+			max_delay = max(self.router.router_table[address].values()) if ports else None
+		except Exception as e:
+			print ('FAILED: {address} not updated: {e}'.format(address  = address, e = e ))
 		finally:
 			self.router_table_lock.release()
 
-		if ports:
-			ports.update({port: delay})
-			#print ('UPDATED: {address}'.format(address  = address ))
+		if max_delay:
+			if delay == max_delay:
+				ports.update({port: delay})
+			elif delay < max_delay:
+				callback = self.add_address(address, {port: delay})
+				#print ('UPDATED: {address}'.format(address  = address ))
+			else:
+				pass
 		else:
 			callback = self.add_address(address, {port: delay})
-			#print ('ADDED: {address}'.format(address  = address ) if not callback else 'FAIED: ' + callback)
+			#print ('ADDED: {address}'.format(address  = address ) if not callback else 'FAIED: ' + callback)		
 
 	# Метод обновления таблицы маршрутизации с помощью таблицы маршрутизации "соседа"
 	def update_router_table(self, table, port):
@@ -205,14 +214,11 @@ class Communication:
 			table.pop(self.router.address_id, None)
 
 			for address, ports in table.items():
+				delay = min(ports.values()) + self.neighbor_delay
+				self.update_delay(address = address, port = port, delay = delay)
 
-				if self.router.router_table.get(address):
-					self.router.router_table[address].update({port: min ( ports.values() ) + self.neighbor_delay})
-				else:
-					self.router.router_table.update({address: {port: min ( ports.values() ) + self.neighbor_delay}})
 		except Exception as e:
-			print('FAILED: {e}'.format(e = e))
-			#print ('FAILED: table from {port} not updated by {table}'.format(port = port, table = table))
+			print ('FAILED: table from {port} not updated by {table}: {e}'.format(port = port, table = table, e = e))
 		finally:
 			self.router_table_lock.release()
 
@@ -259,7 +265,7 @@ class Communication:
 				self.delete_port(port);
 				print('FAILED: sending time out')
 				return False
-			sleep(1)
+			sleep(0.1)
 			self.try_send(port, package, counter - 1)
 
 		else:
@@ -290,7 +296,7 @@ class Communication:
 			for port in self.router.ports.keys():
 				if self.is_port_alive(port):
 					self.send_hello_message(port)
-			sleep(10)
+			sleep(3)
 
 	# Прием сообщений на маршрутизатор
 	def recv_message(self, package):
@@ -319,7 +325,7 @@ class Communication:
 	def accept_message(self, message_sender, message_type, message_data, message_delay, message_port):
 		if message_type is MessageType.hello:
 			# @ todo проверка на соседа, проверка на удаление узлов у других таблиц
-			self.update_delay(message_sender, message_port, message_delay) 
+			self.update_delay(address = message_sender, port = message_port, delay = message_delay) 
 			self.update_router_table(table = message_data, port = message_port)
 			#print ('ROUTER TABLE OF {sender} is {table}'.format(sender = message_sender, table = message_data))
 
@@ -343,10 +349,6 @@ class Communication:
 			else:
 				# Если уже удален - ничего не делаем
 				pass
-			# delete address from talbe
-			# if it there -> send neighbors
-			# else -> nothing
-
 		else:
 			pass
 
@@ -355,7 +357,7 @@ class Communication:
 			package = client.recv()
 			result = self.recv_message(package)
 			# print ('PACKAGE RECEIVED: ' + package if result else 'PACKAGE CORRUPTED')
-			#client.sendall(self.router.address_id)
+			# client.sendall(self.router.address_id)
 			if not result:
 				client.shutdown(SHUT_RDWR)
 				client.close()

@@ -51,8 +51,9 @@ class Port:
 			self.client.send(  message  )
 			return None
 		except:
-			return ('FAILED: sending message on {router}'.format(router = str(self)))
+			return ('FAILED: Sending message on {router}'.format(router = str(self)))
 
+	# Получение ответа от маршрутизатора
 	def recv(self):
 		try:
 			return self.client.recv()

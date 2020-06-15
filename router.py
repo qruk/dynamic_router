@@ -24,7 +24,6 @@ class Router:
 		self.config = config
 		self.connections = connections
 		self.address_id = self.router(address_id)
-		print('Я проснулся!', self.address_id)
 		self.communication = Communication(self)	
 
 	def __str__(self):
