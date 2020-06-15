@@ -327,9 +327,8 @@ class Communication:
 			# @ todo проверка на соседа, проверка на удаление узлов у других таблиц
 			self.update_delay(address = message_sender, port = message_port, delay = message_delay) 
 			self.update_router_table(table = message_data, port = message_port)
-			#print ('ROUTER TABLE OF {sender} is {table}'.format(sender = message_sender, table = message_data))
-
 			print('ROUTER TABLE: {table}'.format(table = self.get_router_table_view()))
+			#print ('ROUTER TABLE OF {sender} is {table}'.format(sender = message_sender, table = message_data))
 			'''
 			f = open('hello.txt', 'a', encoding='utf-8')
 			f.write(str(message_sender) + '\n')
@@ -349,6 +348,7 @@ class Communication:
 			else:
 				# Если уже удален - ничего не делаем
 				pass
+			print('ROUTER TABLE: {table}'.format(table = self.get_router_table_view()))
 		else:
 			pass
 
