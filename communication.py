@@ -219,19 +219,9 @@ class Communication:
 
 	# Метод непосредственной отправки сообщения, обновляет таблицу маршрутизации в случае успешного хеллоу-запроса
 	def send_message(self, message_sender, message_type, message_address = None, message_data = None, message_delay = 0, specific_port = None):
-		ports = self.get_ports(address = message_address) if not specific_port else [ specific_port ]
+		port = self.get_min_port(address = message_address) if not specific_port else specific_port
 		package = self.make_package(message_sender = message_sender, message_address = message_address, message_type = message_type, message_data = message_data, message_delay = message_delay)
-		for port in ports:
-			self.make_thread ( target = self.try_send, args = (port, package) )
-			'''
-			print ('SENDED: {port} -> {package}'.format(port = port, package = package) if callback else callback)
-			
-			begin = time()
-			end = time()
-			delay = float(end - begin)
-
-			print('TIME: {delay}'.format(delay = delay))
-			'''
+		self.make_thread ( target = self.try_send, args = (port, package) )
 
 	# Отправка клиентских запросов
 	def send_client_message(self):
@@ -276,7 +266,6 @@ class Communication:
 			# Отправляем дальше
 			self.send_message(message_sender = sender, message_address = address, message_type = message['message_type'], message_data = message['message_data'], message_delay = message['message_delay'] + 1 )#self.get_delay(address, port) )
 
-
 		return True
 
 	def accept_message(self, message_sender, message_type, message_data, message_delay, message_port):
@@ -316,7 +305,3 @@ class Communication:
 		#self.make_thread(target = self.clienter, daemon = True)
 		self.make_thread(target = self.hellower, daemon = True)
 		self.server.run(self.handle)
-
-# @todo ответ только если есть в приложенном hello-списке
-# @todo разобраться, почему выводится так, а также ждать ресерв отдельно где-то: почему умирает порт
-# возможно поправить hello-пакеты
