@@ -30,9 +30,9 @@ class Communication:
 		self.server = ServerConnectionTCP(server_host = self.router.config['host_id'], server_port = self.router.config['port_id'], server_buffer = self.router.config['server_buffer'], server_max_queue = self.router.config['server_max_queue']) 
 		self.router_table_lock = RLock()
 		self.port_locks = {}
-		self.neighbor_lock = RLock()
 		self.enable_ports()
-		self.init_neighbors()
+		# @todo 
+		self.neighbor_delay = 1;
 
 	def get_port_id(self):
 		return ( str(self.router.config['host_id']) + ':' + str(self.router.config['port_id']) )
@@ -82,10 +82,6 @@ class Communication:
 		for port in self.router.ports.keys():
 			self.get_up_port(port)
 
-	def init_neighbors(self):
-		for port in self.router.ports.keys():
-			self.router.neighbors.update({port: None})
-
 	# Эти 2 метода инкапсулируют тот факт, что сообщение получается не от порта, а от клиента с допустимым id порта сервера
 	def pack_message(self, message_sender, message_address, message_type, message_data, message_delay):
 		package = {'port_id': self.get_port_id(), 'message_sender': message_sender, 'message_address': message_address, 'message_type': message_type, 'message_data': message_data, 'message_delay': message_delay }
@@ -102,8 +98,10 @@ class Communication:
 			return self.pack_message(message_sender = message_sender, message_address = message_address, message_type = message_type.value, message_data = self.router.router_table, message_delay = message_delay)
 		elif message_type is MessageType.data:
 			return self.pack_message(message_sender = message_sender, message_address = message_address, message_type = message_type.value, message_data = message_data, message_delay = message_delay)
+		elif message_type is MessageType.dead:
+			return self.pack_message(message_sender = message_sender, message_address = message_address, message_type = message_type.value, message_data = message_data, message_delay = message_delay)
 		else:
-			return self.pack_message(message_sender = message_sender, message_address = message_address, message_type = MessageType.other, message_data = message_data, message_delay = message_delay)
+			return None
 
 	def get_message (self, package):
 		try:
@@ -126,23 +124,49 @@ class Communication:
 		finally:
 			self.router_table_lock.release()
 
+	# Удаление адреса из таблицы маршрутизации
+	def delete_address_from_router_table(self, address):
+		self.router_table_lock.acquire()
+		result = None
+		try:
+			result = self.router.router_table.pop(address, None)
+		finally:
+			self.router_table_lock.release()
+		return result
+
+	# Отправка dead-пакета
+	def send_dead_message(self, port, data):
+		self.send_message(message_type = MessageType.dead, message_sender = self.router.address_id, message_data = data, specific_port = port)
+
+	# Отправка dead-пакетов на все адреса to thread
+	def deader(self, address):
+		for port in self.router.ports.keys():
+				if self.is_port_alive(port):
+					self.send_dead_message(port, address)
+
 	# Метод удаления порта из таблицы паршрутизации, если у адреса больше нет портов, то он удаляетя из таблицы
 	def delete_port_from_router_table(self, port):
 		self.router_table_lock.acquire()
 		try:
 			non_reachable_addresses = []
 			for address, ports in self.router.router_table.items():
-				ports.pop(port, None)
+				delay = ports.pop(port, None)
+
+				# Оповещаем всех, что роутер на этом порту мертв
+				if delay is self.neighbor_delay:
+					self.make_thread (target = self.deader, args = (address,), daemon = True)
+
 				if not self.router.router_table[address]:
 					non_reachable_addresses.append(address)
 			for address in non_reachable_addresses:
-				self.router.router_table.pop(address, None)
+				self.delete_address_from_router_table(address)
 		finally:
 			self.router_table_lock.release()
 
 	# Метод удаления порта из таблицы и перевода его в неактивный режим
 	def delete_port(self, port):
 		self.turn_off_port(port)
+
 		self.delete_port_from_router_table(port)
 
 	# Метод добавления порта с задержкой в таблицу
@@ -166,15 +190,6 @@ class Communication:
 		finally:
 			self.router_table_lock.release()
 
-		if delay is 1:
-			self.neighbor_lock.acquire()
-			try:
-				self.router.neighbors.update({port: address})
-			except:
-				print ('FAILED: {address} as neighbor not updated'.format(address  = address ))
-			finally:
-				self.neighbor_lock.release()
-
 		if ports:
 			ports.update({port: delay})
 			#print ('UPDATED: {address}'.format(address  = address ))
@@ -189,15 +204,14 @@ class Communication:
 			# Не смотрим на свой адресс
 			table.pop(self.router.address_id, None)
 
-
 			for address, ports in table.items():
 
 				if self.router.router_table.get(address):
-					self.router.router_table[address].update({port: min ( ports.values() ) + 1})
+					self.router.router_table[address].update({port: min ( ports.values() ) + self.neighbor_delay})
 				else:
-					self.router.router_table.update({address: {port: min ( ports.values() ) + 1}})
+					self.router.router_table.update({address: {port: min ( ports.values() ) + self.neighbor_delay}})
 		except Exception as e:
-			print('FAILED1: {e}'.format(e = e))
+			print('FAILED: {e}'.format(e = e))
 			#print ('FAILED: table from {port} not updated by {table}'.format(port = port, table = table))
 		finally:
 			self.router_table_lock.release()
@@ -267,7 +281,7 @@ class Communication:
 		while True:
 			self.send_client_message()
 
-	# Отправка hello-запросов
+	# Отправка hello-пакетов
 	def send_hello_message(self, port):
 		self.send_message(message_type = MessageType.hello, message_sender = self.router.address_id, specific_port = port)
 
@@ -298,7 +312,7 @@ class Communication:
 
 		else:
 			# Отправляем дальше
-			self.send_message(message_sender = sender, message_address = address, message_type = message['message_type'], message_data = message['message_data'], message_delay = message['message_delay'] + 1 )#self.get_delay(address, port) )
+			self.send_message(message_sender = sender, message_address = address, message_type = message['message_type'], message_data = message['message_data'], message_delay = message['message_delay'] + self.neighbor_delay )#self.get_delay(address, port) )
 
 		return True
 
@@ -323,6 +337,16 @@ class Communication:
 				f.write(str(message_data) + '\n')
 				f.close()
 			'''
+		elif message_type is MessageType.dead:
+			if self.delete_address_from_router_table(message_data):
+				self.deader(message_data)
+			else:
+				# Если уже удален - ничего не делаем
+				pass
+			# delete address from talbe
+			# if it there -> send neighbors
+			# else -> nothing
+
 		else:
 			pass
 
@@ -336,6 +360,7 @@ class Communication:
 				client.shutdown(SHUT_RDWR)
 				client.close()
 				break
+
 
 	# Запуск маршрутизатора
 	def start(self):
