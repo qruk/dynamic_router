@@ -9,8 +9,8 @@ from json import dumps, loads
 # Класс-перечисление различных типов сообщений
 class MessageType(Enum):
 	hello = 0
-	data = 1
-	other = 2
+	dead  = 1
+	data = 2
 
 # Класс соединения сервер-клиент (TCP)
 class ServerConnectionTCP(ServerConnection):
@@ -21,20 +21,18 @@ class ServerConnectionTCP(ServerConnection):
 	optname = SO_REUSEADDR
 	value = 1
 
+# @todo class обернуть порты в class Neighbors, а работу с роутером - в RouterImpl (в т.ч. мьютексы), base_delay, incr_delay
 # Класс, определяющий поведение маршрутизатора: следит за состоянием других маршрутизаторов на портах, перенаправляет пакеты на нужные порты, актуализирует свою таблицу маршрутизации и тд @todo dynamicComunication?
 class Communication:
 
 	def __init__(self, router):
-		#!1
 		self.router = router
-		#!1
 		self.server = ServerConnectionTCP(server_host = self.router.config['host_id'], server_port = self.router.config['port_id'], server_buffer = self.router.config['server_buffer'], server_max_queue = self.router.config['server_max_queue']) 
-		#!1
-		self.router_table_lock = RLock() 
-		#!1
+		self.router_table_lock = RLock()
 		self.port_locks = {}
-		#!2
+		self.neighbor_lock = RLock()
 		self.enable_ports()
+		self.init_neighbors()
 
 	def get_port_id(self):
 		return ( str(self.router.config['host_id']) + ':' + str(self.router.config['port_id']) )
@@ -83,6 +81,10 @@ class Communication:
 
 		for port in self.router.ports.keys():
 			self.get_up_port(port)
+
+	def init_neighbors(self):
+		for port in self.router.ports.keys():
+			self.router.neighbors.update({port: None})
 
 	# Эти 2 метода инкапсулируют тот факт, что сообщение получается не от порта, а от клиента с допустимым id порта сервера
 	def pack_message(self, message_sender, message_address, message_type, message_data, message_delay):
@@ -150,11 +152,11 @@ class Communication:
 			self.router.router_table.update({address: port_delay})
 			return None
 		except:
-			return 'adding {address} to route table failed'.format(address = address)
+			return 'adding {address} to router table failed'.format(address = address)
 		finally:
 			self.router_table_lock.release()
 
-	# Обновить задержку до адреса по порту
+	# Обновить задержку до адреса по порту, а так же обновить таблицу соседей
 	def update_delay(self, address, port, delay):
 		self.router_table_lock.acquire()
 		try:
@@ -163,6 +165,15 @@ class Communication:
 			print ('FAILED: {address} not updated'.format(address  = address ))
 		finally:
 			self.router_table_lock.release()
+
+		if delay is 1:
+			self.neighbor_lock.acquire()
+			try:
+				self.router.neighbors.update({port: address})
+			except:
+				print ('FAILED: {address} as neighbor not updated'.format(address  = address ))
+			finally:
+				self.neighbor_lock.release()
 
 		if ports:
 			ports.update({port: delay})
@@ -175,39 +186,28 @@ class Communication:
 	def update_router_table(self, table, port):
 		self.router_table_lock.acquire()
 		try:
+			# Не смотрим на свой адресс
 			table.pop(self.router.address_id, None)
+
+
 			for address, ports in table.items():
-				if (ports[min(ports)] == 2):
-							print('FUCKING SHIT I FOUND U: ' +  str(table))
+
 				if self.router.router_table.get(address):
-					self.router.router_table[address].update({port: ports[min(ports)] + 1})
+					self.router.router_table[address].update({port: min ( ports.values() ) + 1})
 				else:
-					self.router.router_table.update({address: {port: ports[min(ports)] + 1}})
+					self.router.router_table.update({address: {port: min ( ports.values() ) + 1}})
 		except Exception as e:
-			print('FAILED: {e}'.format(e = e))
+			print('FAILED1: {e}'.format(e = e))
 			#print ('FAILED: table from {port} not updated by {table}'.format(port = port, table = table))
 		finally:
 			self.router_table_lock.release()
 
-	# Возвращает порт c минимальной задержкой, либо все известные порты (старый метод)
-	def get_ports(self, address):
-		self.router_table_lock.acquire()
-		try:
-			delays_of_ports = self.router.router_table.get(address)
-			port = list( self.router.ports.keys() ) if not delays_of_ports else [ min( delays_of_ports ) ]
-		except:
-			print ('FAILED: no ports to {address}'.format(address  = address ))
-			return None
-		finally:
-			self.router_table_lock.release()
-		return port
-
-	# Возвращает порт c минимальной задержкой
+	# Возвращает порт c минимальной задержкой по адресу
 	def get_min_port(self, address):
 		self.router_table_lock.acquire()
 		try:
 			delays_of_ports = self.router.router_table.get(address)
-			port = None if not delays_of_ports else min( delays_of_ports )
+			port = None if not delays_of_ports else min(delays_of_ports, key=lambda unit: delays_of_ports[unit])
 		except:
 			print ('FAILED: no ports to {address}'.format(address  = address ))
 			return None
@@ -305,8 +305,8 @@ class Communication:
 	def accept_message(self, message_sender, message_type, message_data, message_delay, message_port):
 		if message_type is MessageType.hello:
 			# @ todo проверка на соседа, проверка на удаление узлов у других таблиц
-			self.update_router_table(table = message_data, port = message_port)
 			self.update_delay(message_sender, message_port, message_delay) 
+			self.update_router_table(table = message_data, port = message_port)
 			#print ('ROUTER TABLE OF {sender} is {table}'.format(sender = message_sender, table = message_data))
 
 			print('ROUTER TABLE: {table}'.format(table = self.get_router_table_view()))

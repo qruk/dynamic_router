@@ -9,7 +9,7 @@ class Router:
 	# Таблица маршрутизации {address1: {port1: ping1, port2: ping2, ...}, address2:...}
 	router_table = {}
 
-	# Таблица соседей {port1: address1, port2: address2}
+	# Таблица соседей {port1: address1, port2: address2...}
 	neighbors = {}
 
 	# Cловарь порт-объект порта
@@ -42,7 +42,4 @@ class Router:
 
 	def start(self):
 		self.communication.start()
-
-# @todo другие айдишники
-# @todo взвешенные ребра по времени
 
