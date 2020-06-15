@@ -25,10 +25,15 @@ class ServerConnectionTCP(ServerConnection):
 class Communication:
 
 	def __init__(self, router):
+		#!1
 		self.router = router
+		#!1
 		self.server = ServerConnectionTCP(server_host = self.router.config['host_id'], server_port = self.router.config['port_id'], server_buffer = self.router.config['server_buffer'], server_max_queue = self.router.config['server_max_queue']) 
-		self.router_table_lock = RLock()
+		#!1
+		self.router_table_lock = RLock() 
+		#!1
 		self.port_locks = {}
+		#!2
 		self.enable_ports()
 
 	def get_port_id(self):
@@ -110,6 +115,15 @@ class Communication:
 
 	# Методы работы с таблицей маршрутизации
 
+	def get_router_table_view(self):
+		self.router_table_lock.acquire()
+		try:
+			return str(self.router.router_table)
+		except:
+			return None
+		finally:
+			self.router_table_lock.release()
+
 	# Метод удаления порта из таблицы паршрутизации, если у адреса больше нет портов, то он удаляетя из таблицы
 	def delete_port_from_router_table(self, port):
 		self.router_table_lock.acquire()
@@ -140,6 +154,7 @@ class Communication:
 		finally:
 			self.router_table_lock.release()
 
+	# Обновить задержку до адреса по порту
 	def update_delay(self, address, port, delay):
 		self.router_table_lock.acquire()
 		try:
@@ -155,6 +170,24 @@ class Communication:
 		else:
 			callback = self.add_address(address, {port: delay})
 			#print ('ADDED: {address}'.format(address  = address ) if not callback else 'FAIED: ' + callback)
+
+	# Метод обновления таблицы маршрутизации с помощью таблицы маршрутизации "соседа"
+	def update_router_table(self, table, port):
+		self.router_table_lock.acquire()
+		try:
+			table.pop(self.router.address_id, None)
+			for address, ports in table.items():
+				if (ports[min(ports)] == 2):
+							print('FUCKING SHIT I FOUND U: ' +  str(table))
+				if self.router.router_table.get(address):
+					self.router.router_table[address].update({port: ports[min(ports)] + 1})
+				else:
+					self.router.router_table.update({address: {port: ports[min(ports)] + 1}})
+		except Exception as e:
+			print('FAILED: {e}'.format(e = e))
+			#print ('FAILED: table from {port} not updated by {table}'.format(port = port, table = table))
+		finally:
+			self.router_table_lock.release()
 
 	# Возвращает порт c минимальной задержкой, либо все известные порты (старый метод)
 	def get_ports(self, address):
@@ -182,6 +215,7 @@ class Communication:
 			self.router_table_lock.release()
 		return port
 
+	# Возвращает задержку по порту
 	def get_delay(self, address, port):
 		self.router_table_lock.acquire()
 		try:
@@ -218,7 +252,7 @@ class Communication:
 			pass
 
 	# Метод непосредственной отправки сообщения, обновляет таблицу маршрутизации в случае успешного хеллоу-запроса
-	def send_message(self, message_sender, message_type, message_address = None, message_data = None, message_delay = 0, specific_port = None):
+	def send_message(self, message_sender, message_type, message_address = None, message_data = None, message_delay = 1, specific_port = None):
 		port = self.get_min_port(address = message_address) if not specific_port else specific_port
 		package = self.make_package(message_sender = message_sender, message_address = message_address, message_type = message_type, message_data = message_data, message_delay = message_delay)
 		self.make_thread ( target = self.try_send, args = (port, package) )
@@ -256,11 +290,11 @@ class Communication:
 			return True
 
 		if not self.is_port_alive(port):
-			self.make_thread(target = self.get_up_port, args = (port, ), daemon = True)
+			self.get_up_port(port)
 
 		if self.is_mine(address):
 			# Сохраняем пакеты
-			self.accept_message(message_sender = sender, message_type = message['message_type'], message_data = message['message_data'], message_delay = message['message_delay'], message_port = port,)
+			self.accept_message(message_sender = sender, message_type = message['message_type'], message_data = message['message_data'], message_delay = message['message_delay'], message_port = port)
 
 		else:
 			# Отправляем дальше
@@ -270,9 +304,12 @@ class Communication:
 
 	def accept_message(self, message_sender, message_type, message_data, message_delay, message_port):
 		if message_type is MessageType.hello:
-			self.update_delay(message_sender, message_port, message_delay)
-			print ('ROUTER TABLE OF {sender} is {table}'.format(sender = message_sender, table = message_data))
+			# @ todo проверка на соседа, проверка на удаление узлов у других таблиц
+			self.update_router_table(table = message_data, port = message_port)
+			self.update_delay(message_sender, message_port, message_delay) 
+			#print ('ROUTER TABLE OF {sender} is {table}'.format(sender = message_sender, table = message_data))
 
+			print('ROUTER TABLE: {table}'.format(table = self.get_router_table_view()))
 			'''
 			f = open('hello.txt', 'a', encoding='utf-8')
 			f.write(str(message_sender) + '\n')

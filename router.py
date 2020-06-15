@@ -6,8 +6,11 @@ class Router:
 	# Собственный адрес маршрутизатора (любой строковый идентификатор), на который будут пересылаться пакеты и который будет находится в таблице маршрутизации другого роутера
 	address_id = None
 
-	# Таблица маршрутизации {address_id1: {port1: ping1, port2: ping2, ...}, address_id2:...}
+	# Таблица маршрутизации {address1: {port1: ping1, port2: ping2, ...}, address2:...}
 	router_table = {}
+
+	# Таблица соседей {port1: address1, port2: address2}
+	neighbors = {}
 
 	# Cловарь порт-объект порта
 	ports = {}
@@ -33,12 +36,13 @@ class Router:
 	def router(self, address_id):
 		if not address_id:
 			time_id = str('{:.9f}'.format( time() )).split('.')
-			return time_id[1][-3:] + '.' + time_id[1][-6:-3] + '.' + time_id[1][-9:-6] + '.' + time_id[0][:3]
+			return time_id[0][:3] + '.' + time_id[1][-9:-6] + '.' + time_id[1][-6:-3] + '.' + time_id[1][-3:] 
 		else:
 			return address_id if ( type(address_id) is str ) else str(address_id)
 
 	def start(self):
 		self.communication.start()
 
-
+# @todo другие айдишники
 # @todo взвешенные ребра по времени
+
