@@ -1,5 +1,4 @@
 router_*.py
-/examples
 __pycache__
 __init__.py
 *.txt
