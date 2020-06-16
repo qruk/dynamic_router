@@ -144,22 +144,35 @@ class Communication:
 				if self.is_port_alive(port):
 					self.send_dead_message(port, address)
 
-	# Метод удаления порта из таблицы паршрутизации, если у адреса больше нет портов, то он удаляетя из таблицы
+	# Удаляет порт из адресной строки, оповещает всех о недостижимости, если у адреса больше нет портов
+	def delete_port_from_address(self, port, address):
+		self.router_table_lock.acquire()
+		try:
+			ports = self.router.router_table.get(address)
+			if ports:
+				delay = ports.pop(port, None)
+				if delay:
+					if not self.router.router_table[address]:
+						self.delete_address_from_router_table(address)
+						self.make_thread (target = self.deader, args = (address,), daemon = True)
+		finally:
+			self.router_table_lock.release()
+
+	# Метод удаления порта из таблицы паршрутизации, если у адреса больше нет портов, то он удаляетя из таблицы и всем рассылается запрос о его недостижимости
 	def delete_port_from_router_table(self, port):
 		self.router_table_lock.acquire()
 		try:
 			non_reachable_addresses = []
 			for address, ports in self.router.router_table.items():
 				delay = ports.pop(port, None)
-
-				# Оповещаем всех, что роутер на этом порту мертв
-				if delay is self.neighbor_delay:
-					self.make_thread (target = self.deader, args = (address,), daemon = True)
-
+					
 				if not self.router.router_table[address]:
 					non_reachable_addresses.append(address)
+
 			for address in non_reachable_addresses:
 				self.delete_address_from_router_table(address)
+				# Оповещаем всех, что cоединения к этому адресу больше нет
+				self.make_thread (target = self.deader, args = (address,), daemon = True)
 		finally:
 			self.router_table_lock.release()
 
@@ -343,11 +356,7 @@ class Communication:
 				f.close()
 			'''
 		elif message_type is MessageType.dead:
-			if self.delete_address_from_router_table(message_data):
-				self.deader(message_data)
-			else:
-				# Если уже удален - ничего не делаем
-				pass
+			self.delete_port_from_address(message_port, message_data):
 			print('ROUTER TABLE: {table}'.format(table = self.get_router_table_view()))
 		else:
 			pass
