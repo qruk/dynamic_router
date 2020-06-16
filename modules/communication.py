@@ -6,6 +6,8 @@ from time import sleep, time
 from threading import Thread, RLock
 from json import dumps, loads
 
+from random import choice
+
 # Класс-перечисление различных типов сообщений
 class MessageType(Enum):
 	hello = 0
@@ -30,6 +32,8 @@ class Communication:
 		self.server = ServerConnectionTCP(server_host = self.router.config['host_id'], server_port = self.router.config['port_id'], server_buffer = self.router.config['server_buffer'], server_max_queue = self.router.config['server_max_queue']) 
 		self.router_table_lock = RLock()
 		self.port_locks = {}
+		self.log_lock = RLock()
+		self.data_lock = RLock()
 		self.enable_ports()
 		# @todo 
 		self.neighbor_delay = 1;
@@ -49,16 +53,35 @@ class Communication:
 		thread.start()
 		return thread
 
+	def write_to_file(self, file, data, locker):
+		locker.acquire()
+		try:
+			f = open(file, 'a', encoding='utf-8')
+			f.write(str(data) + '\n')
+			f.close()
+		except Exception as e:
+			print(e)
+		finally:
+			locker.release()
+
+	# Ведение лог-файла
+	def log(self, callback):
+		self.make_thread( target = self.write_to_file, args = (self.get_port_id(), callback, self.log_lock), daemon = True )
+
+	# Прием конечного сообщения от других клиентов
+	def recv(self, data):
+		self.make_thread( target = self.write_to_file, args = (self.get_port_id() + '_data', data, self.data_lock), daemon = True )
+
 	# Метод, устанавливающий соединение на порте
 	def get_up_port(self, port):
 		self.port_locks[port].acquire()
 		try:
 			callback = self.router.ports[port].enable()
-		except:
-			print('FAILED: {port} can not get up'.format(port=port))
+		except Exception as e:
+			self.log('FAILED: {port} can not get up: {e}'.format(port=port, e = e))
 		finally:
 			self.port_locks[port].release()
-		print ('CONNECTED: {router}'.format(router = str(self.router.ports[port])) if not callback else callback)
+		self.log('CONNECTED: {router}'.format(router = str(self.router.ports[port])) if not callback else callback)
 		return True if not callback else False
 
 	# Метод, закрывающий соединение на порте
@@ -66,8 +89,8 @@ class Communication:
 		self.port_locks[port].acquire()
 		try:
 			self.router.ports[port].disable()
-		except:
-			print('FAILED: {port} broken and can not be closed'.format(port=port))
+		except Exception as e:
+			self.log('FAILED: {port} broken and can not be closed: {e}'.format(port=port, e = e))
 		finally:
 			self.port_locks[port].release()
 
@@ -92,7 +115,7 @@ class Communication:
 		port = message.pop('port_id') 
 		return (port, message)
 
-	# Методы паковки/распаковки сообщений
+	# Метод паковки сообщениz
 	def make_package(self, message_sender, message_address, message_type, message_data, message_delay):
 		if message_type is MessageType.hello:
 			return self.pack_message(message_sender = message_sender, message_address = message_address, message_type = message_type.value, message_data = self.router.router_table, message_delay = message_delay)
@@ -103,6 +126,7 @@ class Communication:
 		else:
 			return None
 
+	# Метод получения сообщения с порта
 	def get_message (self, package):
 		try:
 			(port, message) = self.unpack_message(package)
@@ -110,16 +134,17 @@ class Communication:
 			address = message.pop('message_address')
 			message['message_type'] = MessageType(message['message_type'])
 			return (port, sender, address, message)
-		except:
+		except Exception as e:
+			self.log(e)
 			return None
 
 	# Методы работы с таблицей маршрутизации
-
 	def get_router_table_view(self):
 		self.router_table_lock.acquire()
 		try:
 			return str(self.router.router_table)
-		except:
+		except Exception as e:
+			self.log(e)
 			return None
 		finally:
 			self.router_table_lock.release()
@@ -130,6 +155,8 @@ class Communication:
 		result = None
 		try:
 			result = self.router.router_table.pop(address, None)
+		except Exception as e:
+			self.log(e)
 		finally:
 			self.router_table_lock.release()
 		return result
@@ -155,6 +182,8 @@ class Communication:
 					if not self.router.router_table[address]:
 						self.delete_address_from_router_table(address)
 						self.make_thread (target = self.deader, args = (address,), daemon = True)
+		except Exception as e:
+			self.log(e)
 		finally:
 			self.router_table_lock.release()
 
@@ -173,6 +202,8 @@ class Communication:
 				self.delete_address_from_router_table(address)
 				# Оповещаем всех, что cоединения к этому адресу больше нет
 				self.make_thread (target = self.deader, args = (address,), daemon = True)
+		except Exception as e:
+			self.log(e)
 		finally:
 			self.router_table_lock.release()
 
@@ -180,7 +211,7 @@ class Communication:
 	def delete_port(self, port):
 		self.turn_off_port(port)
 		self.delete_port_from_router_table(port)
-		print('DISCONNECTED: {port}'.format(port = port))
+		self.log('DISCONNECTED: {port}'.format(port = port))
 
 	# Метод добавления порта с задержкой в таблицу
 	def add_address(self, address, port_delay):
@@ -188,13 +219,10 @@ class Communication:
 		try:
 			self.router.router_table.update({address: port_delay})
 			return None
-		except:
-			return 'adding {address} to router table failed'.format(address = address)
+		except Exception as e:
+			return 'adding {address} to router table failed: {e}'.format(address = address, e = e)
 		finally:
 			self.router_table_lock.release()
-
-	# Метод, реализующий логику минимального маршрута
-
 
 	# Обновить задержку до адреса по порту, а так же обновить таблицу соседей
 	def update_delay(self, address, port, delay):
@@ -203,7 +231,7 @@ class Communication:
 			ports = self.router.router_table.get(address)
 			max_delay = max(self.router.router_table[address].values()) if ports else None
 		except Exception as e:
-			print ('FAILED: {address} not updated: {e}'.format(address  = address, e = e ))
+			self.log('FAILED: {address} not updated: {e}'.format(address  = address, e = e ))
 		finally:
 			self.router_table_lock.release()
 
@@ -231,7 +259,7 @@ class Communication:
 				self.update_delay(address = address, port = port, delay = delay)
 
 		except Exception as e:
-			print ('FAILED: table from {port} not updated by {table}: {e}'.format(port = port, table = table, e = e))
+			self.log('FAILED: table from {port} not updated by {table}: {e}'.format(port = port, table = table, e = e))
 		finally:
 			self.router_table_lock.release()
 
@@ -241,8 +269,8 @@ class Communication:
 		try:
 			delays_of_ports = self.router.router_table.get(address)
 			port = None if not delays_of_ports else min(delays_of_ports, key=lambda unit: delays_of_ports[unit])
-		except:
-			print ('FAILED: no ports to {address}'.format(address  = address ))
+		except Exception as e:
+			self.log('FAILED: no ports to {address}: {e}'.format(address  = address, e = e ))
 			return None
 		finally:
 			self.router_table_lock.release()
@@ -254,8 +282,8 @@ class Communication:
 		try:
 			delays_of_ports = self.router.router_table.get(address)
 			delay = delays_of_ports.get(port)
-		except:
-			print ('FAILED: no delay to {address}-{port}'.format(address = address, port = port))
+		except Exception as e:
+			self.log('FAILED: no delay to {address}-{port}: {e}'.format(address = address, port = port, e = e))
 			return None
 		finally:
 			self.router_table_lock.release()
@@ -269,14 +297,14 @@ class Communication:
 			callback = self.router.ports[port].send( package )
 			if callback:
 				self.delete_port(port);
-				print (callback)
+				self.log(callback)
 				return False
 			return True
 
 		elif port_state is PortState.resurrecting:
 			if (counter <= 0):
 				self.delete_port(port);
-				print('FAILED: sending time out')
+				self.log('FAILED: sending time out')
 				return False
 			sleep(0.1)
 			self.try_send(port, package, counter - 1)
@@ -292,13 +320,19 @@ class Communication:
 
 	# Отправка клиентских запросов
 	def send_client_message(self):
-		address = input("address: ")
-		message = input("message: ")
+		#address = input("address: ")
+		#message = input("message: ")
+		adresses = list ( self.router.router_table.keys() )
+		if not adresses:
+			return
+		address = choice( adresses )
+		message = 'client message from ' + self.router.address_id
 		self.send_message(message_sender = self.router.address_id, message_address = address, message_type = MessageType.data, message_data = message)
 
 	def clienter(self):
 		while True:
 			self.send_client_message()
+			sleep(1)
 
 	# Отправка hello-пакетов
 	def send_hello_message(self, port):
@@ -315,7 +349,8 @@ class Communication:
 	def recv_message(self, package):
 		try:
 			(port, sender, address, message) = self.get_message(package)
-		except:
+		except Exception as e:
+			self.log(e)
 			return False
 		
 		if self.is_mine(sender):
@@ -340,24 +375,12 @@ class Communication:
 			# @ todo проверка на соседа, проверка на удаление узлов у других таблиц
 			self.update_delay(address = message_sender, port = message_port, delay = message_delay) 
 			self.update_router_table(table = message_data, port = message_port)
-			print('ROUTER TABLE: {table}'.format(table = self.get_router_table_view()))
-			#print ('ROUTER TABLE OF {sender} is {table}'.format(sender = message_sender, table = message_data))
-			'''
-			f = open('hello.txt', 'a', encoding='utf-8')
-			f.write(str(message_sender) + '\n')
-			f.write(str(message_data) + '\n')
-			f.close()
-			'''
-			'''
-			elif message_type is MessageType.data:
-				f = open('data.txt', 'a', encoding='utf-8')
-				f.write(str(message_sender) + '\n')
-				f.write(str(message_data) + '\n')
-				f.close()
-			'''
+			self.log('ROUTER TABLE: {table}'.format(table = self.get_router_table_view()))
 		elif message_type is MessageType.dead:
-			self.delete_port_from_address(message_port, message_data):
-			print('ROUTER TABLE: {table}'.format(table = self.get_router_table_view()))
+			self.delete_port_from_address(message_port, message_data)
+			self.log('ROUTER TABLE: {table}'.format(table = self.get_router_table_view()))
+		elif message_type is MessageType.data:
+			self.recv(message_data)
 		else:
 			pass
 
@@ -365,8 +388,6 @@ class Communication:
 		while True:
 			package = client.recv()
 			result = self.recv_message(package)
-			# print ('PACKAGE RECEIVED: ' + package if result else 'PACKAGE CORRUPTED')
-			# client.sendall(self.router.address_id)
 			if not result:
 				client.shutdown(SHUT_RDWR)
 				client.close()
@@ -375,6 +396,6 @@ class Communication:
 
 	# Запуск маршрутизатора
 	def start(self):
-		#self.make_thread(target = self.clienter, daemon = True)
+		self.make_thread(target = self.clienter, daemon = True)
 		self.make_thread(target = self.hellower, daemon = True)
 		self.server.run(self.handle)
