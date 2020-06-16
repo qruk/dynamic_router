@@ -33,7 +33,6 @@ class Communication:
 		self.router_table_lock = RLock()
 		self.port_locks = {}
 		self.log_lock = RLock()
-		self.data_lock = RLock()
 		self.enable_ports()
 		# @todo 
 		self.neighbor_delay = 1;
@@ -42,7 +41,7 @@ class Communication:
 		return ( str(self.router.config['host_id']) + ':' + str(self.router.config['port_id']) )
 
 	def is_mine(self, address):
-		return address is self.router.address_id or not address
+		return ((address == self.router.address_id) or (not address))
 
 	def is_port_alive(self, port):
 		return self.router.ports[port].state is PortState.alive
@@ -70,7 +69,7 @@ class Communication:
 
 	# Прием конечного сообщения от других клиентов
 	def recv(self, data):
-		self.make_thread( target = self.write_to_file, args = (self.get_port_id() + '_data', data, self.data_lock), daemon = True )
+		self.make_thread( target = self.write_to_file, args = (self.get_port_id() + '_data', data, self.log_lock), daemon = True )
 
 	# Метод, устанавливающий соединение на порте
 	def get_up_port(self, port):
