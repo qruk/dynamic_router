@@ -59,7 +59,7 @@ class Communication:
 			f.write(str(data) + '\n')
 			f.close()
 		except Exception as e:
-			print(e)
+			print("FAILED: writing to file: {e}".format(e = e))
 		finally:
 			locker.release()
 
@@ -134,7 +134,7 @@ class Communication:
 			message['message_type'] = MessageType(message['message_type'])
 			return (port, sender, address, message)
 		except Exception as e:
-			self.log(e)
+			self.log("FAILED: getting message from port: {e}".format(e = e))
 			return None
 
 	# Методы работы с таблицей маршрутизации
@@ -143,7 +143,7 @@ class Communication:
 		try:
 			return str(self.router.router_table)
 		except Exception as e:
-			self.log(e)
+			self.log("FAILED: getting view of router table: {e}".format(e = e))
 			return None
 		finally:
 			self.router_table_lock.release()
@@ -155,7 +155,7 @@ class Communication:
 		try:
 			result = self.router.router_table.pop(address, None)
 		except Exception as e:
-			self.log(e)
+			self.log("FAILED: delete address from router table: {e}".format(e = e))
 		finally:
 			self.router_table_lock.release()
 		return result
@@ -182,7 +182,7 @@ class Communication:
 						self.delete_address_from_router_table(address)
 						self.make_thread (target = self.deader, args = (address,), daemon = True)
 		except Exception as e:
-			self.log(e)
+			self.log("FAILED: delete port from address in router table: {e}".format(e = e))
 		finally:
 			self.router_table_lock.release()
 
@@ -202,7 +202,7 @@ class Communication:
 				# Оповещаем всех, что cоединения к этому адресу больше нет
 				self.make_thread (target = self.deader, args = (address,), daemon = True)
 		except Exception as e:
-			self.log(e)
+			self.log("FAILED: delete port from router table: {e}".format(e = e))
 		finally:
 			self.router_table_lock.release()
 
@@ -290,6 +290,9 @@ class Communication:
 
 	# Метод отправки (с повторами, если порт еще подключается), если отправка невозможна впринципе - удаляет порт из таблицы маршрутизации и переводит его в состояние "мертв"
 	def try_send(self, port, package, counter = 3):
+		if not port:
+			print(package)
+			print(counter)
 		port_state = self.router.ports[port].state
 
 		if port_state is PortState.alive:
@@ -349,7 +352,7 @@ class Communication:
 		try:
 			(port, sender, address, message) = self.get_message(package)
 		except Exception as e:
-			self.log(e)
+			self.log("FAILED: recieving message: {e}".format(e = e))
 			return False
 		
 		if self.is_mine(sender):
