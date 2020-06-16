@@ -21,7 +21,7 @@ class ServerConnectionTCP(ServerConnection):
 	optname = SO_REUSEADDR
 	value = 1
 
-# @todo class обернуть порты в class Neighbors, а работу с роутером - в RouterImpl (в т.ч. мьютексы), base_delay, incr_delay
+# @todo class обернуть порты в class Neighbors, а работу с полями роутера - в RouterImpl (в т.ч. мьютексы), base_delay, incr_delay
 # Класс, определяющий поведение маршрутизатора: следит за состоянием других маршрутизаторов на портах, перенаправляет пакеты на нужные порты, актуализирует свою таблицу маршрутизации и тд @todo dynamicComunication?
 class Communication:
 
